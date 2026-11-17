@@ -1,0 +1,473 @@
+# Maxgrid PRO-22K (Auxus M2-B1) 3-phase 22 kW EV charger, Tuya product id fttxzpbjxwfauqjo.
+# Same DP layout as evsun_evcharger (Andalung Portable EV Charger); differences noted below.
+#
+# ============================== WARNING ==============================
+# This profile exposes the charger's PROTECTION SETTINGS as WRITABLE entities
+# (overcurrent / overvoltage / undervoltage thresholds and the on/off flags for
+# overcurrent, overvoltage, undervoltage, contactor adhesion, Plug and Charge and
+# ground fault protection, all in DP 11 "alarm_set_1").
+# Changing these can disable safety functions of a 22 kW charger and may cause
+# fire or electric shock. Do not automate them. Use entirely at your own risk.
+# Entities are in the "config" category. Thresholds ranges below are conservative
+# limits chosen by the profile author, NOT limits reported by the device.
+# =====================================================================
+#
+# Verified on HW:1.0 SW:1.4.4, protocol 3.5:
+#   - DP 4 (charge current) and DP 14 (work mode incl. charge_delay) writes reach the device.
+#   - DP 19 (charging window) = 2 bytes [start hour, end hour]; writes via mask
+#     work once tuya-local knows the current value (see below).
+#   - DP 11 decoded from app changes: 6 records of [id][flag 03=on/01=off][value 2 B].
+#   - DP 1 scale 100 matches the Smart Life app (30373 = 303.73 kWh).
+# NOT verified: writes to DP 11, DP 18 start/stop with a car, DP 6 current/power masks,
+#   DP 15 scale, DP 25 meaning.
+# Known limitation: the charger does not return DP 11 / DP 19 / DP 1 / DP 6 / DP 25 locally
+#   while idle; they appear after the charger pushes them (e.g. after a change in the app or
+#   while charging). Masked writes fail with "Cannot mask unknown current value" until then.
+# DP 17 (fixed charge) is plain kWh on this unit (cloud spec claims scale 2, device behaves as scale 0).
+# The overcurrent level 1 threshold is recalculated by the charger when the charge current
+# is changed (observed 110%, rounded).
+# DP 5 / DP 12 / DP 33 are not present on this model.
+name: EV charger
+products:
+  - id: fttxzpbjxwfauqjo
+    manufacturer: Maxgrid
+    model: "PRO-22K (Auxus M2-B1)"
+entities:
+  - entity: sensor
+    class: energy
+    dps:
+      - id: 1
+        optional: true
+        type: integer
+        name: sensor
+        unit: kWh
+        mapping:
+          - scale: 100
+        class: total_increasing
+  - entity: sensor
+    translation_key: status
+    icon: "mdi:ev-station"
+    class: enum
+    dps:
+      - id: 3
+        type: string
+        name: sensor
+        mapping:
+          - dps_val: charger_free
+            value: available
+          - dps_val: charger_insert
+            value: plugged_in
+          - dps_val: charger_free_fault
+            value: fault_unplugged
+          - dps_val: charger_wait
+            value: waiting
+          - dps_val: charger_charging
+            value: charging
+          - dps_val: charger_pause
+            value: paused
+          - dps_val: charger_end
+            value: charged
+          - dps_val: charger_fault
+            value: fault
+      - id: 23
+        type: string
+        name: system_version
+  - entity: number
+    name: Charging current
+    class: current
+    category: config
+    dps:
+      - id: 4
+        type: integer
+        name: value
+        unit: A
+        range:
+          min: 6
+          max: 32
+  - entity: sensor
+    name: Phase A voltage
+    class: voltage
+    category: diagnostic
+    dps:
+      - id: 6
+        type: base64
+        optional: true
+        name: sensor
+        unit: V
+        class: measurement
+        mask: "FFFF000000000000"
+        mapping:
+          - scale: 10
+  - entity: sensor
+    name: Phase A current
+    class: current
+    category: diagnostic
+    dps:
+      - id: 6
+        type: base64
+        optional: true
+        name: sensor
+        unit: A
+        class: measurement
+        mask: "0000FFFFFF000000"
+        mapping:
+          - scale: 1000
+  - entity: sensor
+    name: Phase A power
+    class: power
+    category: diagnostic
+    dps:
+      - id: 6
+        type: base64
+        optional: true
+        name: sensor
+        unit: kW
+        class: measurement
+        mask: "0000000000FFFFFF"
+        mapping:
+          - scale: 1000
+  - entity: sensor
+    name: Total power
+    class: power
+    category: diagnostic
+    dps:
+      - id: 9
+        type: integer
+        name: sensor
+        unit: kW
+        class: measurement
+        mapping:
+          - scale: 1000
+  - entity: binary_sensor
+    class: problem
+    category: diagnostic
+    dps:
+      - id: 10
+        type: bitfield
+        name: sensor
+        mapping:
+          - dps_val: 0
+            value: false
+          - value: true
+      - id: 10
+        type: bitfield
+        name: fault_code
+      - id: 10
+        type: bitfield
+        name: description
+        mapping:
+          - dps_val: 0
+            value: ok
+          - dps_val: 1
+            value: Overcurrent
+          - dps_val: 2
+            value: Secondary overcurrent fault
+          - dps_val: 4
+            value: Overvoltage
+          - dps_val: 8
+            value: Undervoltage alarm
+          - dps_val: 16
+            value: Contactor adhesion
+          - dps_val: 32
+            value: Contactor fault
+          - dps_val: 64
+            value: Earth fault
+          - dps_val: 128
+            value: Meter hardware alarm
+          - dps_val: 256
+            value: Emergency stop fault
+          - dps_val: 512
+            value: CP fault
+          - dps_val: 1024
+            value: Meter communication fault
+          - dps_val: 2048
+            value: Card reader fault
+          - dps_val: 4096
+            value: Circuit short fault
+          - dps_val: 8192
+            value: Adhesion fault
+          - dps_val: 16384
+            value: Self-test alarm
+          - dps_val: 32768
+            value: Leakage current alarm
+  # --- Protection settings (alarm_set_1, DP 11). WRITABLE - see warning at top of file.
+  - entity: number
+    name: Overcurrent alarm level 1 threshold
+    class: current
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: value
+        unit: A
+        mask: "0000FFFF0000000000000000000000000000000000000000"
+        range:
+          min: 1
+          max: 40
+  - entity: number
+    name: Overvoltage alarm threshold
+    class: voltage
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: value
+        unit: V
+        mask: "000000000000FFFF00000000000000000000000000000000"
+        range:
+          min: 2400
+          max: 2900
+        mapping:
+          - scale: 10
+  - entity: number
+    name: Undervoltage alarm threshold
+    class: voltage
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: value
+        unit: V
+        mask: "00000000000000000000FFFF000000000000000000000000"
+        range:
+          min: 800
+          max: 2200
+        mapping:
+          - scale: 10
+  - entity: switch
+    name: Overcurrent alarm level 1 enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "00FF00000000000000000000000000000000000000000000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: switch
+    name: Overvoltage alarm enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "0000000000FF000000000000000000000000000000000000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: switch
+    name: Undervoltage alarm enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "000000000000000000FF0000000000000000000000000000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: switch
+    name: Contactor adhesion detection enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "00000000000000000000000000FF00000000000000000000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: switch
+    name: Plug and Charge enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "0000000000000000000000000000000000FF000000000000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: switch
+    name: Ground fault protection enabled
+    category: config
+    dps:
+      - id: 11
+        type: base64
+        optional: true
+        name: switch
+        mask: "000000000000000000000000000000000000000000FF0000"
+        mapping:
+          - dps_val: 3
+            value: true
+          - dps_val: 1
+            value: false
+  - entity: sensor
+    name: Connection
+    icon: "mdi:ev-plug-type2"
+    class: enum
+    translation_key: status
+    category: diagnostic
+    dps:
+      - id: 13
+        type: string
+        name: sensor
+        mapping:
+          - dps_val: controlpi_12v
+            value: standby
+          - dps_val: controlpi_12v_pwm
+            value: Communication initialising
+          - dps_val: controlpi_9v
+            value: Vehicle detected
+          - dps_val: controlpi_9v_pwm
+            value: Vehicle connected
+          - dps_val: controlpi_6v
+            value: Ready to charge
+          - dps_val: controlpi_6v_pwm
+            value: charging
+          - dps_val: controlpi_error
+            value: fault
+  - entity: select
+    translation_key: charging_mode
+    category: config
+    dps:
+      - id: 14
+        type: string
+        name: option
+        mapping:
+          - dps_val: charge_now
+            value: immediate
+          - dps_val: charge_pct
+            value: charge_to_percent
+          - dps_val: charge_energy
+            value: fixed_charge
+          - dps_val: charge_schedule
+            value: scheduled_charge
+          - dps_val: charge_delay
+            value: delayed_charge
+  - entity: sensor
+    name: Remaining
+    class: energy_storage
+    category: diagnostic
+    dps:
+      - id: 15
+        optional: true
+        type: integer
+        name: sensor
+        unit: kWh
+        class: measurement
+        mapping:
+          - scale: 1000
+  - entity: number
+    name: Fixed charge
+    class: energy_storage
+    category: config
+    dps:
+      - id: 17
+        type: integer
+        optional: true
+        name: value
+        unit: kWh
+        range:
+          min: 1
+          max: 200
+  - entity: switch
+    icon: "mdi:ev-station"
+    dps:
+      - id: 18
+        type: boolean
+        name: switch
+  - entity: number
+    name: Schedule start hour
+    category: config
+    icon: "mdi:clock-start"
+    dps:
+      - id: 19
+        type: base64
+        optional: true
+        name: value
+        unit: h
+        mask: "FF00"
+        range:
+          min: 0
+          max: 23
+  - entity: number
+    name: Schedule end hour
+    category: config
+    icon: "mdi:clock-end"
+    dps:
+      - id: 19
+        type: base64
+        optional: true
+        name: value
+        unit: h
+        mask: "00FF"
+        range:
+          min: 0
+          max: 23
+  - entity: sensor
+    class: temperature
+    category: diagnostic
+    dps:
+      - id: 24
+        type: integer
+        name: sensor
+        unit: C
+        class: measurement
+  - entity: sensor
+    name: Charge
+    class: energy_storage
+    dps:
+      - id: 25
+        type: integer
+        optional: true
+        name: sensor
+        unit: kWh
+        class: measurement
+        mapping:
+          - scale: 100
+  - entity: switch
+    name: Real time updates
+    category: config
+    dps:
+      - id: 27
+        type: string
+        name: switch
+        mapping:
+          - dps_val: online
+            value: true
+          - dps_val: offline
+            value: false
+  - entity: number
+    name: Delayed charge timer
+    category: config
+    class: duration
+    translation_key: timer
+    dps:
+      - id: 28
+        type: integer
+        optional: true
+        name: value
+        unit: h
+        range:
+          min: 0
+          max: 12
